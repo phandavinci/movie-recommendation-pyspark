@@ -3,11 +3,12 @@ from pyspark.ml.recommendation import ALSModel
 from pyspark.sql import SparkSession
 from pyspark.sql.types import StructType, StructField, IntegerType
 from pyspark.sql.functions import desc, col
+
 import findspark
 findspark.init()
 
 # Set up Spark session
-spark = SparkSession.builder.master("local") \
+spark = SparkSession.builder \
     .appName("MovieRecommender") \
     .config("spark.hadoop.home.dir", "C:/hadoop") \
     .config("spark.executor.heartbeatInterval", "1000000s") \
@@ -28,10 +29,13 @@ movies = movies.join(links, on="movieId")
 movies = movies.withColumn("genres", col("genres").cast("string"))  # Ensure genres are in string format
 
 # Streamlit app
-st.title("Movie Recommender System")
+st.title("Advanced Movie Recommender System")
+
+# Sidebar for navigation
+option = st.sidebar.selectbox("Navigation", ["Recommended Movies", "All Movies"])
 
 # User input for user ID
-user_id = st.number_input("Enter your User ID", min_value=1, max_value=138494, value=1, step=1)
+user_id = st.sidebar.number_input("Enter your User ID", min_value=1, max_value=138494, value=1, step=1)
 
 # Define schema for user input
 user_schema = StructType([StructField("userId", IntegerType(), True)])
@@ -40,47 +44,50 @@ user_schema = StructType([StructField("userId", IntegerType(), True)])
 user_df = spark.createDataFrame([(user_id,)], schema=user_schema)
 
 # Generate movie recommendations for the user
-user_recommendations = model.recommendForUserSubset(user_df, 10).collect()[0]['recommendations']
+user_recommendations = model.recommendForUserSubset(user_df, 100).collect()[0]['recommendations']
 
-# Display recommendations
-st.subheader(f"Top 10 Movie Recommendations for User {user_id}:")
-for i, recommendation in enumerate(user_recommendations):
-    movie_info = movies.filter(col("movieId") == recommendation['movieId']).select("title", "genres", "imdbId").collect()[0]
-    st.write(f"{i+1}. Movie ID: {recommendation['movieId']}")
-    st.write(f"   Title: {movie_info['title']}")
-    st.write(f"   Genres: {movie_info['genres']}")
-    st.write(f"   IMDb ID: {movie_info['imdbId']}")
-    st.write("")
+# Display recommendations based on the selected option
+if option == "Recommended Movies":
+    st.subheader(f"Top 100 Recommended Movies for User {user_id}:")
 
-# Display top-rated movies
-st.subheader("Top-Rated Movies:")
-top_movies = ratings.groupBy("movieId").agg({"rating": "avg"}).orderBy(desc("avg(rating)")).limit(10)
-for i, row in enumerate(top_movies.collect()):
-    movie_info = movies.filter(col("movieId") == row['movieId']).select("title", "genres", "imdbId").collect()[0]
-    st.write(f"{i+1}. Movie ID: {row['movieId']}")
-    st.write(f"   Title: {movie_info['title']}")
-    st.write(f"   Genres: {movie_info['genres']}")
-    st.write(f"   IMDb ID: {movie_info['imdbId']}")
-    st.write(f"   Average Rating: {row['avg(rating)']:.2f}")
-    st.write("")
+    # Assuming movies is a list of dictionaries with a 'movieId' field
+    movies_dict = {row['movieId']: row for row in movies.collect()}
 
-# Add sorting options
-sort_options = ["Title", "Genres", "Average Rating"]
-selected_sort_option = st.selectbox("Sort Movies By:", sort_options)
+    sort_options = ["Title", "Genres", "Rating"]
+    selected_sort_option = st.selectbox("Sort Movies By:", sort_options)
 
-if selected_sort_option == "Title":
-    movies = movies.orderBy("title")
-elif selected_sort_option == "Genres":
-    movies = movies.orderBy("genres")
-elif selected_sort_option == "Average Rating":
-    top_movies = ratings.groupBy("movieId").agg({"rating": "avg"}).orderBy(desc("avg(rating)")).limit(10)
-    movies = movies.join(top_movies, on="movieId").orderBy(desc("avg(rating)"))
+    if selected_sort_option == "Title":
+        user_recommendations = sorted(user_recommendations, key=lambda x: movies_dict[x['movieId']]['title'])
+    elif selected_sort_option == "Genres":
+        user_recommendations = sorted(user_recommendations, key=lambda x: movies_dict[x['movieId']]['genres'])
+    elif selected_sort_option == "Rating":
+        user_recommendations = sorted(user_recommendations, key=lambda x: x['rating'], reverse=True)
 
-# Display sorted movies
-st.subheader(f"Sorted Movies by {selected_sort_option}:")
-for i, row in enumerate(movies.limit(10).collect()):
-    st.write(f"{i+1}. Movie ID: {row['movieId']}")
-    st.write(f"   Title: {row['title']}")
-    st.write(f"   Genres: {row['genres']}")
-    st.write(f"   IMDb ID: {row['imdbId']}")
-    st.write("")
+    for i, recommendation in enumerate(user_recommendations):
+        movie_info = movies_dict[recommendation['movieId']]
+        st.write(f"{i+1}. Movie ID: {recommendation['movieId']}")
+        st.write(f"   Title: {movie_info['title']}")
+        st.write(f"   Genres: {movie_info['genres']}")
+        st.write(f"   IMDb ID: {movie_info['imdbId']}")
+        st.write(f"   Rating: {recommendation['rating']:.2f}")
+        st.write("")
+
+elif option == "All Movies":
+    st.subheader("Top 1000 Movies:")
+    sort_options_all_movies = ["Title", "Genres", "Average Rating"]
+    selected_sort_option_all_movies = st.selectbox("Sort Movies By:", sort_options_all_movies)
+
+    if selected_sort_option_all_movies == "Title":
+        movies = movies.orderBy("title")
+    elif selected_sort_option_all_movies == "Genres":
+        movies = movies.orderBy("genres")
+    elif selected_sort_option_all_movies == "Average Rating":
+        top_movies = ratings.groupBy("movieId").agg({"rating": "avg"}).orderBy(desc("avg(rating)")).limit(1000)
+        movies = movies.join(top_movies, on="movieId").orderBy(desc("avg(rating)"))
+
+    for i, row in enumerate(movies.limit(1000).collect()):
+        st.write(f"{i+1}. Movie ID: {row['movieId']}")
+        st.write(f"   Title: {row['title']}")
+        st.write(f"   Genres: {row['genres']}")
+        st.write(f"   IMDb ID: {row['imdbId']}")
+        st.write("")
